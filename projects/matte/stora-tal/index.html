@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Stora tal – Matte – Vivavid</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink:#151719; --muted:rgba(21,23,25,.59); --line:#e0e0e2;
+    --accent:#2d5fe3; --ok:#1f8a4c; --ok-bg:#e7f6ec; --bad:#c62828; --bad-bg:#fdecec;
+  }
+  * { box-sizing:border-box; }
+  html, body { margin:0; }
+  body { font-family:"Noto Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; color:var(--ink); line-height:1.5; background:#fff; }
+  .wrap { max-width:520px; margin:0 auto; padding:0 16px; }
+  header { padding:16px 0; border-bottom:1px solid var(--line); }
+  header .wrap { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+  header a { color:var(--accent); text-decoration:none; }
+  .stats { display:flex; gap:16px; font-variant-numeric:tabular-nums; color:var(--muted); font-size:.95rem; }
+  .stats b { color:var(--ink); font-weight:500; }
+
+  h1 { font-size:1.6rem; margin:28px 0 8px; }
+  p { color:var(--muted); margin:0 0 16px; }
+
+  .btn { display:block; width:100%; border:0; border-radius:10px; padding:14px 16px; font:inherit; font-size:1.1rem; font-weight:500; cursor:pointer; background:var(--accent); color:#fff; }
+  .btn.secondary { background:#f1f2f4; color:var(--ink); }
+  .btn + .btn { margin-top:10px; }
+
+  /* Quiz */
+  .progress { height:4px; background:#f1f2f4; border-radius:2px; margin:20px 0 28px; overflow:hidden; }
+  .progress div { height:100%; width:0; background:var(--accent); transition:width .2s; }
+  .qnum { color:var(--muted); font-size:.95rem; margin-bottom:4px; }
+  .question { font-size:2.2rem; font-weight:700; line-height:1.2; margin:0 0 20px; font-variant-numeric:tabular-nums; word-break:break-word; }
+  form { display:flex; gap:8px; }
+  input {
+    flex:1; min-width:0; font:inherit; font-size:1.6rem; font-variant-numeric:tabular-nums;
+    padding:10px 14px; border:2px solid var(--line); border-radius:10px; outline:none; background:#fff; color:var(--ink);
+  }
+  input:focus { border-color:var(--accent); }
+  input.ok { border-color:var(--ok); background:var(--ok-bg); }
+  input.bad { border-color:var(--bad); background:var(--bad-bg); }
+  form .btn { width:auto; padding:0 20px; }
+  .feedback { min-height:1.6em; margin-top:12px; font-size:1.05rem; font-weight:500; }
+  .feedback.ok { color:var(--ok); }
+  .feedback.bad { color:var(--bad); }
+
+  /* Result */
+  .score { font-size:3rem; font-weight:700; margin:8px 0 0; font-variant-numeric:tabular-nums; }
+  .time { color:var(--muted); margin-bottom:24px; }
+  .review { list-style:none; padding:0; margin:0 0 24px; border-top:1px solid var(--line); }
+  .review li { display:flex; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid var(--line); font-variant-numeric:tabular-nums; }
+  .review .wrong { color:var(--bad); }
+  .review .right { color:var(--ok); }
+
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a href="../">← Matte</a>
+    <div class="stats" id="stats" hidden>
+      <span>Poäng <b id="score">0</b></span>
+      <span>Tid <b id="timer">0</b> s</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section id="start">
+    <h1>Stora tal</h1>
+    <p>Multiplikation och division med stora tal. 20 frågor. Du får 1 poäng för varje rätt svar, och tiden räknas från första frågan.</p>
+    <button class="btn" id="startBtn" type="button">Starta</button>
+  </section>
+
+  <section id="quiz" hidden>
+    <div class="progress"><div id="bar"></div></div>
+    <div class="qnum" id="qnum"></div>
+    <div class="question" id="question"></div>
+    <form id="form" autocomplete="off">
+      <input id="answer" type="text" inputmode="decimal" enterkeyhint="go" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Svar">
+      <button class="btn" type="submit">Svara</button>
+    </form>
+    <div class="feedback" id="feedback" aria-live="polite"></div>
+  </section>
+
+  <section id="result" hidden>
+    <h1>Klart!</h1>
+    <div class="score" id="finalScore"></div>
+    <div class="time" id="finalTime"></div>
+    <ul class="review" id="review"></ul>
+    <button class="btn" id="againBtn" type="button">Kör igen</button>
+    <a class="btn secondary" href="../" style="text-align:center;text-decoration:none;margin-top:10px">Tillbaka till Matte</a>
+  </section>
+
+</main>
+
+<script>
+(function () {
+  const TOTAL = 20;
+  const OK_DELAY = 500;     // ms innan nästa fråga vid rätt svar
+  const BAD_DELAY = 1800;   // ms som rätt svar visas vid fel
+
+  const $ = (id) => document.getElementById(id);
+  const el = {
+    start: $("start"), quiz: $("quiz"), result: $("result"), stats: $("stats"),
+    score: $("score"), timer: $("timer"), bar: $("bar"), qnum: $("qnum"),
+    question: $("question"), form: $("form"), answer: $("answer"), feedback: $("feedback"),
+    finalScore: $("finalScore"), finalTime: $("finalTime"), review: $("review"),
+  };
+
+  // ---------- Frågegenerator ----------
+  const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+  const pick = (arr) => arr[rand(0, arr.length - 1)];
+  // Ett "runt" tal: siffra 1–9 följd av 0–n nollor
+  const round = (minZeros, maxZeros, minDigit = 1) => rand(minDigit, 9) * Math.pow(10, rand(minZeros, maxZeros));
+
+  function makeQuestion() {
+    for (;;) {
+      if (Math.random() < 0.5) {
+        // Multiplikation, t.ex. 20 × 300
+        const a = round(1, 3, 2), b = round(0, 3, 2);
+        const ans = a * b;
+        if (ans > 10_000_000) continue;
+        const [x, y] = Math.random() < 0.5 ? [a, b] : [b, a];
+        return { text: `${fmt(x)} × ${fmt(y)}`, answer: ans };
+      } else {
+        // Division med heltalssvar, t.ex. 5000 / 50
+        const divisor = round(1, 3);          // 10, 50, 300, 2000 ...
+        const ans = round(0, 3);              // 1, 7, 40, 800 ...
+        const dividend = divisor * ans;
+        if (dividend < 100 || dividend > 10_000_000) continue;
+        return { text: `${fmt(dividend)} / ${fmt(divisor)}`, answer: ans };
+      }
+    }
+  }
+
+  // Svensk formatering: mellanslag som tusentalsavgränsare
+  function fmt(n) {
+    return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  }
+
+  // Tolkar elevens svar: tillåter mellanslag, komma eller punkt
+  function parse(str) {
+    const s = str.replace(/[\s  ]/g, "").replace(",", ".");
+    if (!/^-?\d+(\.\d+)?$/.test(s)) return NaN;
+    return Number(s);
+  }
+
+  // ---------- Spellogik ----------
+  let questions = [], index = 0, points = 0, startTime = 0, tick = null, locked = false, log = [];
+
+  function newRound() {
+    const seen = new Set();
+    questions = [];
+    while (questions.length < TOTAL) {
+      const q = makeQuestion();
+      if (!seen.has(q.text)) { seen.add(q.text); questions.push(q); }
+    }
+    index = 0; points = 0; log = [];
+    el.score.textContent = "0";
+    el.timer.textContent = "0";
+  }
+
+  function showQuestion() {
+    const q = questions[index];
+    el.qnum.textContent = `Fråga ${index + 1} av ${TOTAL}`;
+    el.question.textContent = q.text;
+    el.bar.style.width = `${(index / TOTAL) * 100}%`;
+    el.answer.value = "";
+    el.answer.className = "";
+    el.answer.readOnly = false;
+    el.feedback.textContent = "";
+    el.feedback.className = "feedback";
+    locked = false;
+    el.answer.focus();
+  }
+
+  function start() {
+    newRound();
+    el.start.hidden = true;
+    el.result.hidden = true;
+    el.quiz.hidden = false;
+    el.stats.hidden = false;
+    showQuestion();
+    startTime = Date.now();
+    clearInterval(tick);
+    tick = setInterval(() => {
+      el.timer.textContent = Math.floor((Date.now() - startTime) / 1000);
+    }, 250);
+  }
+
+  function submit(e) {
+    e.preventDefault();
+    if (locked) return;
+    const raw = el.answer.value.trim();
+    if (raw === "") { el.answer.focus(); return; }
+
+    const q = questions[index];
+    const given = parse(raw);
+    const correct = given === q.answer;
+    locked = true;
+    el.answer.readOnly = true;   // behåller fokus så att tangentbordet ligger kvar
+
+    log.push({ text: q.text, answer: q.answer, given: raw, correct });
+
+    if (correct) {
+      points += 1;
+      el.score.textContent = points;
+      el.answer.className = "ok";
+      el.feedback.className = "feedback ok";
+      el.feedback.textContent = "Rätt!";
+    } else {
+      el.answer.className = "bad";
+      el.feedback.className = "feedback bad";
+      el.feedback.textContent = `Fel – rätt svar är ${fmt(q.answer)}`;
+    }
+
+    setTimeout(next, correct ? OK_DELAY : BAD_DELAY);
+  }
+
+  function next() {
+    index += 1;
+    if (index < TOTAL) { showQuestion(); return; }
+    finish();
+  }
+
+  function finish() {
+    clearInterval(tick);
+    const secs = Math.round((Date.now() - startTime) / 1000);
+    el.timer.textContent = secs;
+    el.bar.style.width = "100%";
+    el.answer.blur();
+    el.quiz.hidden = true;
+    el.result.hidden = false;
+    el.finalScore.textContent = `${points} / ${TOTAL}`;
+    el.finalTime.textContent = `Tid: ${secs} sekunder`;
+    el.review.innerHTML = "";
+    for (const item of log) {
+      const li = document.createElement("li");
+      const left = document.createElement("span");
+      left.textContent = `${item.text} = ${fmt(item.answer)}`;
+      const right = document.createElement("span");
+      right.className = item.correct ? "right" : "wrong";
+      right.textContent = item.correct ? "✓" : `✗ (${item.given})`;
+      li.append(left, right);
+      el.review.append(li);
+    }
+  }
+
+  $("startBtn").addEventListener("click", start);
+  $("againBtn").addEventListener("click", start);
+  el.form.addEventListener("submit", submit);
+})();
+</script>
+</body>
+</html>

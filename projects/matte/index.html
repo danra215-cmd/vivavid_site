@@ -15,13 +15,23 @@
   header a { color:var(--accent); text-decoration:none; }
   h1 { font-size:2rem; margin:40px 0 8px; }
   p { color:var(--muted); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:16px; margin-top:24px; }
+  .card { display:block; border:1px solid var(--line); border-radius:8px; padding:20px; color:var(--ink); text-decoration:none; }
+  .card:hover { border-color:var(--accent); }
+  .card h2 { margin:0 0 4px; font-size:1.15rem; }
+  .card span { color:var(--muted); font-size:.95rem; }
+  .soon { opacity:.5; pointer-events:none; }
 </style>
 </head>
 <body>
-<header><div class="wrap"><a href="../">← Projects</a></div></header>
+<header><div class="wrap"><a href="../">← Välj ämne</a></div></header>
 <main class="wrap">
   <h1>Matte</h1>
-  <p>Övningsuppgifter kommer snart.</p>
+  <p>Välj övning.</p>
+  <div class="grid">
+    <a class="card" href="stora-tal/"><h2>Stora tal</h2><span>Multiplikation och division med stora tal</span></a>
+    <a class="card soon" href="andelar/"><h2>Andelar</h2><span>Kommer snart</span></a>
+  </div>
 </main>
 </body>
 </html>
