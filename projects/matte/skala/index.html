@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Skala – Matte – Vivavid</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink:#151719; --muted:rgba(21,23,25,.59); --line:#e0e0e2;
+    --accent:#2d5fe3; --ok:#1f8a4c; --ok-bg:#e7f6ec; --bad:#c62828; --bad-bg:#fdecec;
+  }
+  * { box-sizing:border-box; }
+  html, body { margin:0; }
+  body { font-family:"Noto Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; color:var(--ink); line-height:1.5; background:#fff; }
+  .wrap { max-width:520px; margin:0 auto; padding:0 16px; }
+  header { padding:16px 0; border-bottom:1px solid var(--line); }
+  header .wrap { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+  header a { color:var(--accent); text-decoration:none; }
+  .stats { display:flex; gap:16px; font-variant-numeric:tabular-nums; color:var(--muted); font-size:.95rem; }
+  .stats b { color:var(--ink); font-weight:500; }
+
+  h1 { font-size:1.6rem; margin:28px 0 8px; }
+  p { color:var(--muted); margin:0 0 16px; }
+
+  .btn { display:block; width:100%; border:0; border-radius:10px; padding:14px 16px; font:inherit; font-size:1.1rem; font-weight:500; cursor:pointer; background:var(--accent); color:#fff; }
+  .btn.secondary { background:#f1f2f4; color:var(--ink); }
+  .btn + .btn { margin-top:10px; }
+
+  /* Quiz */
+  .progress { height:4px; background:#f1f2f4; border-radius:2px; margin:20px 0 28px; overflow:hidden; }
+  .progress div { height:100%; width:0; background:var(--accent); transition:width .2s; }
+  .qnum { color:var(--muted); font-size:.95rem; margin-bottom:4px; }
+  .question { font-size:1.3rem; font-weight:700; line-height:1.2; margin:0 0 20px; font-variant-numeric:tabular-nums; word-break:break-word; }
+  form { display:flex; gap:8px; }
+  input {
+    flex:1; min-width:0; font:inherit; font-size:1.6rem; font-variant-numeric:tabular-nums;
+    padding:10px 14px; border:2px solid var(--line); border-radius:10px; outline:none; background:#fff; color:var(--ink);
+  }
+  .unit { align-self:center; font-size:1.3rem; font-weight:500; min-width:2.2em; }
+  input:focus { border-color:var(--accent); }
+  input.ok { border-color:var(--ok); background:var(--ok-bg); }
+  input.bad { border-color:var(--bad); background:var(--bad-bg); }
+  form .btn { width:auto; padding:0 20px; }
+  .feedback { min-height:1.6em; margin-top:12px; font-size:1.05rem; font-weight:500; }
+  .feedback.ok { color:var(--ok); }
+  .feedback.bad { color:var(--bad); }
+
+  /* Result */
+  .score { font-size:3rem; font-weight:700; margin:8px 0 0; font-variant-numeric:tabular-nums; }
+  .time { color:var(--muted); margin-bottom:24px; }
+  .review { list-style:none; padding:0; margin:0 0 24px; border-top:1px solid var(--line); }
+  .review li { display:flex; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid var(--line); font-variant-numeric:tabular-nums; }
+  .review .wrong { color:var(--bad); }
+  .review .right { color:var(--ok); }
+
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a href="../">← Matte</a>
+    <div class="stats" id="stats" hidden>
+      <span>Poäng <b id="score">0</b></span>
+      <span>Tid <b id="timer">0</b> s</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section id="start">
+    <h1>Skala</h1>
+    <p>Räkna med skala åt båda hållen: från karta eller ritning till verkligheten och tillbaka. Svara i enheten som står efter rutan. 20 frågor. Du får 1 poäng för varje rätt svar, och tiden räknas från första frågan.</p>
+    <button class="btn" id="startBtn" type="button">Starta</button>
+  </section>
+
+  <section id="quiz" hidden>
+    <div class="progress"><div id="bar"></div></div>
+    <div class="qnum" id="qnum"></div>
+    <div class="question" id="question"></div>
+    <form id="form" autocomplete="off">
+      <input id="answer" type="text" inputmode="decimal" enterkeyhint="go" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Svar">
+      <span class="unit" id="unit"></span>
+      <button class="btn" id="submitBtn" type="submit">Svara</button>
+    </form>
+    <div class="feedback" id="feedback" aria-live="polite"></div>
+  </section>
+
+  <section id="result" hidden>
+    <h1>Klart!</h1>
+    <div class="score" id="finalScore"></div>
+    <div class="time" id="finalTime"></div>
+    <ul class="review" id="review"></ul>
+    <button class="btn" id="againBtn" type="button">Kör igen</button>
+    <a class="btn secondary" href="../" style="text-align:center;text-decoration:none;margin-top:10px">Tillbaka till Matte</a>
+  </section>
+
+</main>
+
+<script>
+(function () {
+  const TOTAL = 20;
+  const OK_DELAY = 500;     // ms innan nästa fråga vid rätt svar
+  const BAD_DELAY = 1800;   // ms som rätt svar visas vid fel
+
+  const $ = (id) => document.getElementById(id);
+  const el = {
+    start: $("start"), quiz: $("quiz"), result: $("result"), stats: $("stats"),
+    score: $("score"), timer: $("timer"), bar: $("bar"), qnum: $("qnum"),
+    question: $("question"), form: $("form"), answer: $("answer"), feedback: $("feedback"),
+    finalScore: $("finalScore"), finalTime: $("finalTime"), review: $("review"),
+  };
+
+  // ---------- Frågegenerator ----------
+  const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+  const pick = (arr) => arr[rand(0, arr.length - 1)];
+  // Ett "runt" tal: siffra 1–9 följd av 0–n nollor
+  const round = (minZeros, maxZeros, minDigit = 1) => rand(minDigit, 9) * Math.pow(10, rand(minZeros, maxZeros));
+
+  // Enheter i millimeter
+  const UNITS = { mm: 1, cm: 10, dm: 100, m: 1000, km: 1_000_000, mil: 10_000_000 };
+  const MAP_REAL = ["m", "km", "mil"];               // verklighet för kartor (1:1 000 och mindre)
+  const DRAW_REAL = ["mm", "cm", "dm", "m"];         // verklighet för ritningar (1:10, 1:100)
+  const SMALL = ["mm", "cm", "dm"];                  // enheter för ritning/bild
+  const SHRINK = [10, 100, 1000, 10000, 100000, 100000]; // 1:k (1:100 000 dubbelt, ger km och mil)
+  const GROW = [2, 5, 10, 100];                       // k:1
+
+  // Uttryck en längd i mm i den största enhet (ur listan) där den blir ett heltal ≥ 1.
+  // Ibland väljs näst största, så att eleven också får byta enhet "nedåt".
+  function express(mmValue, units) {
+    const ok = units.filter((u) => mmValue % UNITS[u] === 0 && mmValue / UNITS[u] >= 1 && mmValue / UNITS[u] < 100000);
+    if (!ok.length) return null;
+    const u = ok.length > 1 && Math.random() < 0.25 ? ok[ok.length - 2] : ok[ok.length - 1];
+    return { value: mmValue / UNITS[u], unit: u };
+  }
+
+  function makeQuestion() {
+    for (;;) {
+      const shrink = Math.random() < 0.7;
+      const k = shrink ? pick(SHRINK) : pick(GROW);
+      const scale = shrink ? `1:${fmt(k)}` : `${k}:1`;
+      const place = shrink ? (k >= 1000 ? "kartan" : "ritningen") : "bilden";
+
+      // Längd på kartan/ritningen/bilden, i mm
+      let drawnMm, realMm;
+      if (shrink) {
+        drawnMm = k >= 1000 ? rand(1, 20) * 10           // kartor: 1–20 cm
+                            : rand(1, 20) * pick([1, 10]); // ritningar: 1–20 mm eller cm
+        realMm = drawnMm * k;
+      } else {
+        realMm = rand(1, 9) * pick([1, 10]);             // 1–9 mm eller 1–9 cm
+        drawnMm = realMm * k;
+      }
+      const drawn = express(drawnMm, shrink && k >= 1000 ? ["mm", "cm"] : SMALL);
+      const real = express(realMm, shrink ? (k >= 1000 ? MAP_REAL : DRAW_REAL) : SMALL);
+      if (!drawn || !real) continue;
+
+      const toReal = Math.random() < 0.5;   // åt båda hållen
+      const what = shrink ? "avståndet" : "längden";
+      const ask = shrink ? "Hur långt är det" : "Hur lång är den";
+      if (toReal) {
+        return {
+          text: `Skala ${scale}. På ${place} är ${what} ${fmt(drawn.value)} ${drawn.unit}. ${ask} i verkligheten?`,
+          short: `${scale}: ${fmt(drawn.value)} ${drawn.unit} på ${place} → verklighet`,
+          answer: real.value, unit: real.unit,
+        };
+      }
+      return {
+        text: `Skala ${scale}. I verkligheten är ${what} ${fmt(real.value)} ${real.unit}. ${ask} på ${place}?`,
+        short: `${scale}: ${fmt(real.value)} ${real.unit} i verkligheten → ${place}`,
+        answer: drawn.value, unit: drawn.unit,
+      };
+    }
+  }
+
+  // Svensk formatering: mellanslag som tusentalsavgränsare
+  function fmt(n) {
+    return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  }
+
+  // Tolkar elevens svar: tillåter mellanslag, komma eller punkt
+  function parse(str) {
+    const s = str.replace(/[\s  ]/g, "").replace(",", ".");
+    if (!/^-?\d+(\.\d+)?$/.test(s)) return NaN;
+    return Number(s);
+  }
+
+  // ---------- Spellogik ----------
+  let questions = [], index = 0, points = 0, startTime = 0, tick = null, locked = false, log = [];
+
+  function newRound() {
+    const seen = new Set();
+    questions = [];
+    while (questions.length < TOTAL) {
+      const q = makeQuestion();
+      if (!seen.has(q.text)) { seen.add(q.text); questions.push(q); }
+    }
+    index = 0; points = 0; log = [];
+    el.score.textContent = "0";
+    el.timer.textContent = "0";
+  }
+
+  function showQuestion() {
+    const q = questions[index];
+    el.qnum.textContent = `Fråga ${index + 1} av ${TOTAL}`;
+    el.question.textContent = q.text;
+    document.getElementById("unit").textContent = q.unit;
+    el.bar.style.width = `${(index / TOTAL) * 100}%`;
+    el.answer.value = "";
+    el.answer.className = "";
+    el.feedback.textContent = "";
+    el.feedback.className = "feedback";
+    locked = false;
+    el.answer.focus();
+  }
+
+  function start() {
+    newRound();
+    el.start.hidden = true;
+    el.result.hidden = true;
+    el.quiz.hidden = false;
+    el.stats.hidden = false;
+    showQuestion();
+    startTime = Date.now();
+    clearInterval(tick);
+    tick = setInterval(() => {
+      el.timer.textContent = Math.floor((Date.now() - startTime) / 1000);
+    }, 250);
+  }
+
+  function submit(e) {
+    e.preventDefault();
+    if (locked) return;
+    const raw = el.answer.value.trim();
+    if (raw === "") { el.answer.focus(); return; }
+
+    const q = questions[index];
+    const given = parse(raw);
+    const correct = given === q.answer;
+    locked = true;
+
+    log.push({ text: q.short, unit: q.unit, answer: q.answer, given: raw, correct });
+
+    if (correct) {
+      points += 1;
+      el.score.textContent = points;
+      el.answer.className = "ok";
+      el.feedback.className = "feedback ok";
+      el.feedback.textContent = "Rätt!";
+    } else {
+      el.answer.className = "bad";
+      el.feedback.className = "feedback bad";
+      el.feedback.textContent = `Fel – rätt svar är ${fmt(q.answer)} ${q.unit}`;
+    }
+
+    setTimeout(next, correct ? OK_DELAY : BAD_DELAY);
+  }
+
+  function next() {
+    index += 1;
+    if (index < TOTAL) { showQuestion(); return; }
+    finish();
+  }
+
+  function finish() {
+    clearInterval(tick);
+    const secs = Math.round((Date.now() - startTime) / 1000);
+    el.timer.textContent = secs;
+    el.bar.style.width = "100%";
+    el.answer.blur();
+    el.quiz.hidden = true;
+    el.result.hidden = false;
+    el.finalScore.textContent = `${points} / ${TOTAL}`;
+    el.finalTime.textContent = `Tid: ${secs} sekunder`;
+    el.review.innerHTML = "";
+    for (const item of log) {
+      const li = document.createElement("li");
+      const left = document.createElement("span");
+      left.textContent = `${item.text}: ${fmt(item.answer)} ${item.unit}`;
+      const right = document.createElement("span");
+      right.className = item.correct ? "right" : "wrong";
+      right.textContent = item.correct ? "✓" : `✗ (${item.given})`;
+      li.append(left, right);
+      el.review.append(li);
+    }
+  }
+
+  $("startBtn").addEventListener("click", start);
+  $("againBtn").addEventListener("click", start);
+  el.form.addEventListener("submit", submit);
+
+  // iPhone: tangentbordet får bara öppnas direkt vid en tryckning, och det stängs
+  // om fältet tappar fokus eller blir skrivskyddat. Därför behåller svarsfältet
+  // fokus hela omgången: knappen "Svara" får inte ta fokus, och under
+  // feedbackpausen blockeras inmatning i stället för att fältet låses.
+  const keepFocus = (e) => e.preventDefault();
+  $("submitBtn").addEventListener("mousedown", keepFocus);
+  $("submitBtn").addEventListener("pointerdown", keepFocus);
+  el.answer.addEventListener("beforeinput", (e) => { if (locked) e.preventDefault(); });
+  el.answer.addEventListener("blur", () => {
+    // Om fokus tappas mitt i en omgång (t.ex. tryck utanför), ta tillbaka det vid nästa tryck
+    if (!el.quiz.hidden) document.addEventListener("pointerup", () => el.answer.focus(), { once: true });
+  });
+})();
+</script>
+</body>
+</html>
