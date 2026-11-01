@@ -83,7 +83,7 @@
     <div class="question" id="question"></div>
     <form id="form" autocomplete="off">
       <input id="answer" type="text" inputmode="decimal" enterkeyhint="go" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Svar">
-      <button class="btn" type="submit">Svara</button>
+      <button class="btn" id="submitBtn" type="submit">Svara</button>
     </form>
     <div class="feedback" id="feedback" aria-live="polite"></div>
   </section>
@@ -173,7 +173,6 @@
     el.bar.style.width = `${(index / TOTAL) * 100}%`;
     el.answer.value = "";
     el.answer.className = "";
-    el.answer.readOnly = false;
     el.feedback.textContent = "";
     el.feedback.className = "feedback";
     locked = false;
@@ -204,7 +203,6 @@
     const given = parse(raw);
     const correct = given === q.answer;
     locked = true;
-    el.answer.readOnly = true;   // behåller fokus så att tangentbordet ligger kvar
 
     log.push({ text: q.text, answer: q.answer, given: raw, correct });
 
@@ -255,6 +253,19 @@
   $("startBtn").addEventListener("click", start);
   $("againBtn").addEventListener("click", start);
   el.form.addEventListener("submit", submit);
+
+  // iPhone: tangentbordet får bara öppnas direkt vid en tryckning, och det stängs
+  // om fältet tappar fokus eller blir skrivskyddat. Därför behåller svarsfältet
+  // fokus hela omgången: knappen "Svara" får inte ta fokus, och under
+  // feedbackpausen blockeras inmatning i stället för att fältet låses.
+  const keepFocus = (e) => e.preventDefault();
+  $("submitBtn").addEventListener("mousedown", keepFocus);
+  $("submitBtn").addEventListener("pointerdown", keepFocus);
+  el.answer.addEventListener("beforeinput", (e) => { if (locked) e.preventDefault(); });
+  el.answer.addEventListener("blur", () => {
+    // Om fokus tappas mitt i en omgång (t.ex. tryck utanför), ta tillbaka det vid nästa tryck
+    if (!el.quiz.hidden) document.addEventListener("pointerup", () => el.answer.focus(), { once: true });
+  });
 })();
 </script>
 </body>
