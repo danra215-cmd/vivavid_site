@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Web demo – Vivavid</title>
 <style>
-  html, body { height:100%; margin:0; overflow:hidden; background:#7f9fe0; }
+  html, body { height:100%; margin:0; overflow:hidden; background:#10121c; }
   body { cursor:none; touch-action:none; user-select:none; -webkit-user-select:none; }
   canvas { position:fixed; inset:0; width:100%; height:100%; display:block; }
 
@@ -14,6 +14,8 @@
   #scale { position:relative; height:100%; border-radius:10px; box-shadow:0 0 0 2px rgba(255,255,255,.75), 0 2px 12px rgba(0,0,0,.3); }
   #marker { position:absolute; left:50%; top:0; width:28px; height:28px; margin:-14px 0 0 -14px; border-radius:50%; border:3px solid #fff; box-sizing:border-box; box-shadow:0 1px 6px rgba(0,0,0,.5); pointer-events:none; }
   #palette:focus-visible #marker { outline:2px solid #000; outline-offset:2px; }
+
+  #nogl { display:none; position:fixed; inset:0; align-items:center; justify-content:center; padding:16px; color:#fff; font:16px system-ui,sans-serif; text-align:center; }
 </style>
 </head>
 <body>
@@ -21,19 +23,36 @@
 <div id="palette" role="slider" tabindex="0" aria-label="Grundfärg" aria-orientation="vertical" aria-valuemin="0" aria-valuemax="359">
   <div id="scale"><div id="marker"></div></div>
 </div>
+<div id="nogl">Den här demon kräver WebGL 2.</div>
 
 <script>
 (() => {
   'use strict';
 
-  // Inställningar
-  const RADIUS = 50;        // cirkelns radie i CSS-pixlar
-  const LIGHTNESS = 0.74;   // OKLCH-ljushet: alla kulörer upplevs lika ljusa
-  const CHROMA = 0.14;      // OKLCH-mättnad
-  const DRIFT_DEG = 40;     // hur långt färgen vandrar från grundfärgen, i grader
-  const DRIFT_SECONDS = 14; // en full svängning i färgskalan
-  const HUE_TIME = 0.35;    // sekunder: mjuk övergång vid byte av grundfärg
-  const FADE_TIME = 0.12;   // sekunder: cirkeln tonas in/ut vid fönsterkanten
+  // --- Inställningar ------------------------------------------------------
+
+  // Rumtidsplanet
+  const WELL_DEPTH = 3.0;    // brunnens djup i världsenheter
+  const WELL_WIDTH = 1.15;    // brunnens bredd
+  const PINCH = 0.30;        // hur mycket rutnätet dras in mot stjärnan (0–0,35)
+  const GRID_SIZE = 0.5;     // rutornas storlek
+  const WAVE_SPEED = 10;     // störningar sprids utåt med ändlig hastighet
+  const MESH_X = 360, MESH_Y = 240;
+
+  // Kameran
+  const CAM_PITCH = 28 * Math.PI / 180;  // lutning från rakt ovanifrån
+  const CAM_HEIGHT = 9;
+  const CAM_TAN = Math.tan(25 * Math.PI / 180);  // halva vertikala synfältet
+
+  // Färg
+  const LIGHTNESS = 0.70, CHROMA = 0.15;  // OKLCH
+  const DRIFT_DEG = 40;      // färgens vandring från grundfärgen
+  const DRIFT_SECONDS = 14;  // en full svängning
+  const SPREAD_DEG = 38;     // färgomfång tvärs över planet
+  const HUE_TIME = 0.35;     // mjuk övergång vid byte av grundfärg
+
+  // Rörelsehistorik: varje punkt på planet ser stjärnan där den var r/c sekunder sedan
+  const HISTORY = 64, HISTORY_STEP = 0.03;
 
   const canvas = document.getElementById('stage');
   const palette = document.getElementById('palette');
@@ -71,129 +90,19 @@
 
   const css = rgb => `rgb(${rgb.map(v => Math.round(v * 255)).join(' ')})`;
 
-  // --- Rendering: WebGL med dithering, annars Canvas 2D --------------------
-
-  const VERTEX = `
-    attribute vec2 p;
-    void main() { gl_Position = vec4(p, 0.0, 1.0); }`;
-
-  // Dithering (interleaved gradient noise) tar bort bandning i gradienten
-  const FRAGMENT = `
-    precision highp float;
-    uniform vec3 uColor;
-    uniform vec2 uMouse;
-    uniform float uRadius;
-    uniform float uPresence;
-    void main() {
-      float d = distance(gl_FragCoord.xy, uMouse);
-      float k = mix(1.0, smoothstep(0.0, uRadius, d), uPresence);
-      float n = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
-      gl_FragColor = vec4(uColor * k + (n - 0.5) / 255.0, 1.0);
-    }`;
-
-  function createWebGL() {
-    const gl = canvas.getContext('webgl', { alpha:false, antialias:false, depth:false, stencil:false });
-    if (!gl) return null;
-
-    let u = null;
-    const compile = (type, source) => {
-      const shader = gl.createShader(type);
-      gl.shaderSource(shader, source);
-      gl.compileShader(shader);
-      return shader;
-    };
-    const setup = () => {
-      const program = gl.createProgram();
-      gl.attachShader(program, compile(gl.VERTEX_SHADER, VERTEX));
-      gl.attachShader(program, compile(gl.FRAGMENT_SHADER, FRAGMENT));
-      gl.linkProgram(program);
-      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return false;
-      gl.useProgram(program);
-      gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
-      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-      const p = gl.getAttribLocation(program, 'p');
-      gl.enableVertexAttribArray(p);
-      gl.vertexAttribPointer(p, 2, gl.FLOAT, false, 0, 0);
-      u = {
-        color: gl.getUniformLocation(program, 'uColor'),
-        mouse: gl.getUniformLocation(program, 'uMouse'),
-        radius: gl.getUniformLocation(program, 'uRadius'),
-        presence: gl.getUniformLocation(program, 'uPresence'),
-      };
-      return true;
-    };
-    if (!setup()) return null;
-
-    canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); u = null; });
-    canvas.addEventListener('webglcontextrestored', setup);
-
-    return (rgb, x, y, radius, presence) => {
-      if (!u) return;
-      gl.viewport(0, 0, canvas.width, canvas.height);
-      gl.uniform3f(u.color, rgb[0], rgb[1], rgb[2]);
-      gl.uniform2f(u.mouse, x, canvas.height - y);
-      gl.uniform1f(u.radius, radius);
-      gl.uniform1f(u.presence, presence);
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
-    };
-  }
-
-  function createCanvas2D() {
-    const ctx = canvas.getContext('2d', { alpha:false });
-    return (rgb, x, y, radius, presence) => {
-      ctx.fillStyle = css(rgb);
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      if (presence <= 0) return;
-      const g = ctx.createRadialGradient(x, y, 0, x, y, radius);
-      g.addColorStop(0, `rgba(0,0,0,${presence})`);
-      g.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = g;
-      ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
-    };
-  }
-
-  const draw = createWebGL() || createCanvas2D();
-
-  // --- Tillstånd ----------------------------------------------------------
-
-  let dpr = 1;
-  let targetHue = 262;  // vald grundfärg
-  let baseHue = targetHue;
-  const mouse = { x: 0, y: 0, inside: false };
-  let presence = 0;
-
-  function resize() {
-    dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.round(window.innerWidth * dpr);
-    canvas.height = Math.round(window.innerHeight * dpr);
-  }
-  window.addEventListener('resize', resize);
-  resize();
-
-  // --- Muspekare ----------------------------------------------------------
-
-  function trackPointer(e) {
-    mouse.x = e.clientX;
-    mouse.y = e.clientY;
-    mouse.inside = true;
-  }
-  window.addEventListener('pointermove', trackPointer);
-  window.addEventListener('pointerdown', trackPointer);
-  window.addEventListener('pointerup', e => { if (e.pointerType === 'touch') mouse.inside = false; });
-  window.addEventListener('pointercancel', () => { mouse.inside = false; });
-  document.documentElement.addEventListener('pointerleave', () => { mouse.inside = false; });
-  window.addEventListener('blur', () => { mouse.inside = false; });
-
   // --- Färgpalett ---------------------------------------------------------
 
+  let targetHue = 262;  // vald grundfärg
+  let baseHue = targetHue;
+
   const stops = [];
-  for (let i = 0; i <= 48; i++) stops.push(css(oklch(LIGHTNESS, CHROMA, i * 7.5)));
+  for (let i = 0; i <= 48; i++) stops.push(css(oklch(0.74, 0.14, i * 7.5)));
   scale.style.background = `linear-gradient(to bottom, ${stops.join(',')})`;
 
   function setHue(hue) {
     targetHue = ((hue % 360) + 360) % 360;
     marker.style.top = `${targetHue / 3.6}%`;
-    marker.style.background = css(oklch(LIGHTNESS, CHROMA, targetHue));
+    marker.style.background = css(oklch(0.74, 0.14, targetHue));
     palette.setAttribute('aria-valuenow', Math.round(targetHue));
   }
   setHue(targetHue);
@@ -219,6 +128,279 @@
     e.preventDefault();
   });
 
+  // --- WebGL --------------------------------------------------------------
+
+  const gl = canvas.getContext('webgl2', { alpha:false, antialias:true, depth:true });
+  if (!gl) {
+    palette.style.display = 'none';
+    document.getElementById('nogl').style.display = 'flex';
+    return;
+  }
+  canvas.addEventListener('webglcontextlost', e => e.preventDefault());
+  canvas.addEventListener('webglcontextrestored', () => location.reload());
+
+  // Planet: ett tätt nät i skärmkoordinater, med marginal så att
+  // inga kanter syns när ytan trycks ned.
+  const PLANE_VS = `#version 300 es
+    precision highp float;
+    in vec2 aNdc;
+    uniform vec3 uCam, uRight, uUp, uFwd;
+    uniform vec2 uTan;
+    uniform vec3 uHist[${HISTORY}];   // xy = position, z = rörelseenergi
+    uniform float uTime;
+    out vec2 vP;
+    out vec3 vN;
+    out float vH;
+
+    const float DEPTH = ${WELL_DEPTH.toFixed(3)}, WIDTH = ${WELL_WIDTH.toFixed(3)};
+    const float C = ${WAVE_SPEED.toFixed(3)}, STEP = ${HISTORY_STEP.toFixed(3)};
+    const float LAST = ${(HISTORY - 1).toFixed(1)} - 0.001;
+
+    vec3 past(float age) {
+      float f = clamp(age / STEP, 0.0, LAST);
+      int i = int(f);
+      return mix(uHist[i], uHist[i + 1], fract(f));
+    }
+
+    // Stjärnans läge sett från p, med fördröjning r/c
+    vec3 retarded(vec2 p) {
+      vec3 s = past(length(p - uHist[0].xy) / C);
+      return past(length(p - s.xy) / C);
+    }
+
+    float height(vec2 p) {
+      vec3 s = retarded(p);
+      float r = length(p - s.xy);
+      float well = -DEPTH / sqrt(1.0 + r * r / (WIDTH * WIDTH));
+      float wave = s.z * 0.42 * sin(9.0 * (uTime - r / C)) * smoothstep(0.3, 2.5, r) / (1.0 + 0.12 * r);
+      return well + wave;
+    }
+
+    void main() {
+      vec3 dir = uFwd + uRight * aNdc.x * uTan.x + uUp * aNdc.y * uTan.y;
+      vec2 p = (uCam + dir * (-uCam.z / dir.z)).xy;
+
+      float h = height(p);
+      const float E = 0.04;
+      float dx = height(p + vec2(E, 0.0)) - height(p - vec2(E, 0.0));
+      float dy = height(p + vec2(0.0, E)) - height(p - vec2(0.0, E));
+      vN = normalize(vec3(-dx, -dy, 2.0 * E));
+
+      vec2 toStar = p - retarded(p).xy;
+      float r2 = dot(toStar, toStar);
+      vec2 q = p - toStar * ${PINCH.toFixed(3)} * WIDTH * WIDTH / (r2 + WIDTH * WIDTH);
+
+      vP = p;
+      vH = h;
+      vec3 v = vec3(q, h) - uCam;
+      float w = dot(v, uFwd);
+      gl_Position = vec4(dot(v, uRight) / uTan.x, dot(v, uUp) / uTan.y, (w / 30.0 * 2.0 - 1.0) * w, w);
+    }`;
+
+  const PLANE_FS = `#version 300 es
+    precision highp float;
+    in vec2 vP;
+    in vec3 vN;
+    in float vH;
+    uniform vec3 uColA, uColB, uColC;
+    uniform vec2 uStar;
+    uniform float uTime;
+    out vec4 outColor;
+
+    void main() {
+      // Färggradient över planet, i långsam rörelse
+      float t = 0.5 + 0.28 * sin(vP.x * 0.19 + vP.y * 0.13 + uTime * 0.21)
+                    + 0.22 * sin(vP.y * 0.27 - vP.x * 0.08 - uTime * 0.13);
+      vec3 col = t < 0.5 ? mix(uColA, uColB, t * 2.0) : mix(uColB, uColC, t * 2.0 - 1.0);
+
+      // Ljus från sidan gör kurvaturen läsbar, djupet går mot svart
+      float diffuse = 0.74 + 0.5 * dot(vN, normalize(vec3(-0.45, 0.55, 0.7))) - 0.1;
+      float depth = clamp(-vH / ${WELL_DEPTH.toFixed(3)}, 0.0, 1.0);
+      float dark = 1.0 - smoothstep(0.12, 0.92, depth);
+      col *= diffuse * dark;
+
+      // Stjärnans sken i brunnens botten
+      vec2 d = vP - uStar;
+      col += vec3(1.0, 0.58, 0.28) * 0.42 * exp(-dot(d, d) / 0.9);
+
+      // Rutnät, kantutjämnat
+      vec2 g = vP / ${GRID_SIZE.toFixed(3)};
+      vec2 a = abs(fract(g - 0.5) - 0.5) / (fwidth(g) * 1.0);
+      float line = 1.0 - min(min(a.x, a.y), 1.0);
+      col += line * (vec3(1.0) - col) * (0.2 + 0.5 * dark);
+
+      float n = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+      outColor = vec4(col + (n - 0.5) / 255.0, 1.0);
+    }`;
+
+  // Stjärnan ritas ovanpå planet, exakt under muspekaren
+  const STAR_VS = `#version 300 es
+    precision highp float;
+    in vec2 aNdc;
+    uniform vec2 uCenter, uSize;   // i clip-koordinater
+    out vec2 vUv;
+    void main() {
+      vUv = aNdc;
+      gl_Position = vec4(uCenter + aNdc * uSize, 0.0, 1.0);
+    }`;
+
+  const STAR_FS = `#version 300 es
+    precision highp float;
+    in vec2 vUv;
+    uniform float uTime, uSpan;
+    out vec4 outColor;
+
+    void main() {
+      float d = length(vUv) * uSpan;  // 1 = stjärnans yta
+      float a = atan(vUv.y, vUv.x);
+
+      float rays = 0.8 + 0.2 * sin(a * 7.0 + uTime * 0.7) * sin(a * 4.0 - uTime * 0.5);
+      float corona = exp(-(max(d, 1.0) - 1.0) * 1.7 / rays);
+      corona *= smoothstep(uSpan, uSpan * 0.55, d);
+
+      vec3 glow = mix(vec3(1.0, 0.42, 0.14), vec3(1.0, 0.8, 0.5), corona);
+      float disc = smoothstep(1.03, 0.97, d);
+      float limb = sqrt(max(0.0, 1.0 - d * d));
+      vec3 surface = mix(vec3(1.0, 0.72, 0.32), vec3(1.0, 0.98, 0.9), limb);
+
+      float alpha = max(disc, corona * 0.85);
+      vec3 rgb = mix(glow * corona * 0.85, surface, disc);
+      outColor = vec4(rgb, alpha);
+    }`;
+
+  function program(vs, fs) {
+    const p = gl.createProgram();
+    for (const [type, src] of [[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, fs]]) {
+      const s = gl.createShader(type);
+      gl.shaderSource(s, src);
+      gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s));
+      gl.attachShader(p, s);
+    }
+    gl.bindAttribLocation(p, 0, 'aNdc');
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) console.error(gl.getProgramInfoLog(p));
+    const u = {};
+    const count = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+    for (let i = 0; i < count; i++) {
+      const name = gl.getActiveUniform(p, i).name.replace('[0]', '');
+      u[name] = gl.getUniformLocation(p, name);
+    }
+    return { p, u };
+  }
+
+  const plane = program(PLANE_VS, PLANE_FS);
+  const star = program(STAR_VS, STAR_FS);
+
+  // Nätets geometri
+  const planeVao = gl.createVertexArray();
+  gl.bindVertexArray(planeVao);
+  const verts = new Float32Array((MESH_X + 1) * (MESH_Y + 1) * 2);
+  for (let y = 0, i = 0; y <= MESH_Y; y++) {
+    for (let x = 0; x <= MESH_X; x++) {
+      verts[i++] = (x / MESH_X * 2 - 1) * 1.25;
+      verts[i++] = (y / MESH_Y * 2 - 1) * 1.25;
+    }
+  }
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+  const indices = new Uint32Array(MESH_X * MESH_Y * 6);
+  for (let y = 0, i = 0; y < MESH_Y; y++) {
+    for (let x = 0; x < MESH_X; x++) {
+      const a = y * (MESH_X + 1) + x, b = a + 1, c = a + MESH_X + 1, d = c + 1;
+      indices.set([a, b, c, b, d, c], i);
+      i += 6;
+    }
+  }
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+
+  // Stjärnans fyrkant
+  const starVao = gl.createVertexArray();
+  gl.bindVertexArray(starVao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+  gl.enable(gl.DEPTH_TEST);
+  gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+  gl.clearColor(0.06, 0.07, 0.11, 1);
+
+  // --- Kamera -------------------------------------------------------------
+
+  const cam = [0, -CAM_HEIGHT * Math.tan(CAM_PITCH), CAM_HEIGHT];
+  const right = [1, 0, 0];
+  const up = [0, Math.cos(CAM_PITCH), Math.sin(CAM_PITCH)];
+  const fwd = [0, Math.sin(CAM_PITCH), -Math.cos(CAM_PITCH)];
+  let tanX = 1, tanY = CAM_TAN;
+
+  // Mushelst skjuts in på brunnens bottenplan, så att stjärnan hamnar exakt under pekaren
+  function pointerToWell(clientX, clientY) {
+    const nx = clientX / window.innerWidth * 2 - 1;
+    const ny = 1 - clientY / window.innerHeight * 2;
+    const dir = [0, 1, 2].map(i => fwd[i] + right[i] * nx * tanX + up[i] * ny * tanY);
+    const s = (-WELL_DEPTH - cam[2]) / dir[2];
+    return [cam[0] + dir[0] * s, cam[1] + dir[1] * s];
+  }
+
+  // --- Tillstånd ----------------------------------------------------------
+
+  const pointer = { x: window.innerWidth * 0.45, y: window.innerHeight * 0.5 };
+  let dpr = 1, starRadius = 30;
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.round(window.innerWidth * dpr);
+    canvas.height = Math.round(window.innerHeight * dpr);
+    const aspect = window.innerWidth / window.innerHeight;
+    tanY = CAM_TAN * Math.max(1, 1.1 / aspect);  // bredare vy i stående format
+    tanX = tanY * aspect;
+    starRadius = Math.max(24, Math.min(window.innerWidth, window.innerHeight) * 0.045);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  function trackPointer(e) {
+    pointer.x = e.clientX;
+    pointer.y = e.clientY;
+  }
+  window.addEventListener('pointermove', trackPointer);
+  window.addEventListener('pointerdown', trackPointer);
+
+  // Rörelselogg som samplas om till jämna tidssteg varje bildruta
+  const log = [];
+  const hist = new Float32Array(HISTORY * 3);
+  let energy = 0, lastVx = 0, lastVy = 0;
+
+  function record(t, dt, x, y) {
+    const prev = log[log.length - 1];
+    if (prev && dt > 0) {
+      const vx = (x - prev.x) / dt, vy = (y - prev.y) / dt;
+      const kick = Math.hypot(vx - lastVx, vy - lastVy) * 0.012;
+      lastVx = vx; lastVy = vy;
+      energy = Math.min(1, Math.max(energy * Math.exp(-dt / 0.22), kick));
+    }
+    log.push({ t, x, y, e: energy });
+    while (log.length > 2 && log[1].t < t - HISTORY * HISTORY_STEP - 0.1) log.shift();
+  }
+
+  function resampleHistory(t) {
+    let j = log.length - 1;
+    for (let i = 0; i < HISTORY; i++) {
+      const at = t - i * HISTORY_STEP;
+      while (j > 0 && log[j].t > at) j--;
+      const a = log[j], b = log[Math.min(j + 1, log.length - 1)];
+      const f = b.t > a.t ? Math.min(1, Math.max(0, (at - a.t) / (b.t - a.t))) : 0;
+      hist[i * 3]     = a.x + (b.x - a.x) * f;
+      hist[i * 3 + 1] = a.y + (b.y - a.y) * f;
+      hist[i * 3 + 2] = a.e + (b.e - a.e) * f;
+    }
+  }
+
   // --- Animation ----------------------------------------------------------
 
   let last = performance.now();
@@ -226,19 +408,52 @@
   function frame(now) {
     const dt = Math.min(0.1, (now - last) / 1000);
     last = now;
+    const t = now / 1000;
 
-    // Grundfärgen glider längs den kortaste vägen runt färgcirkeln
     const delta = ((targetHue - baseHue + 540) % 360) - 180;
     baseHue += delta * (1 - Math.exp(-dt / HUE_TIME));
 
     // Två sinusvågor med olika takt ger en rörelse som inte känns upprepad
-    const phase = now / 1000 / DRIFT_SECONDS * Math.PI * 2;
-    const drift = DRIFT_DEG * (0.7 * Math.sin(phase) + 0.3 * Math.sin(phase * 2.37 + 1));
-    const rgb = oklch(LIGHTNESS, CHROMA, baseHue + drift);
+    const phase = t / DRIFT_SECONDS * Math.PI * 2;
+    const hue = baseHue + DRIFT_DEG * (0.7 * Math.sin(phase) + 0.3 * Math.sin(phase * 2.37 + 1));
 
-    presence += ((mouse.inside ? 1 : 0) - presence) * (1 - Math.exp(-dt / FADE_TIME));
+    const [sx, sy] = pointerToWell(pointer.x, pointer.y);
+    record(t, dt, sx, sy);
+    resampleHistory(t);
 
-    draw(rgb, mouse.x * dpr, mouse.y * dpr, RADIUS * dpr, presence);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    // Planet
+    gl.useProgram(plane.p);
+    gl.disable(gl.BLEND);
+    gl.enable(gl.DEPTH_TEST);
+    gl.uniform3fv(plane.u.uCam, cam);
+    gl.uniform3fv(plane.u.uRight, right);
+    gl.uniform3fv(plane.u.uUp, up);
+    gl.uniform3fv(plane.u.uFwd, fwd);
+    gl.uniform2f(plane.u.uTan, tanX, tanY);
+    gl.uniform3fv(plane.u.uHist, hist);
+    gl.uniform1f(plane.u.uTime, t % 1000);
+    gl.uniform2f(plane.u.uStar, sx, sy);
+    gl.uniform3fv(plane.u.uColA, oklch(LIGHTNESS, CHROMA, hue - SPREAD_DEG));
+    gl.uniform3fv(plane.u.uColB, oklch(LIGHTNESS, CHROMA, hue));
+    gl.uniform3fv(plane.u.uColC, oklch(LIGHTNESS, CHROMA, hue + SPREAD_DEG));
+    gl.bindVertexArray(planeVao);
+    gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_INT, 0);
+
+    // Stjärnan
+    const span = 6;  // glorians räckvidd, i stjärnradier
+    gl.useProgram(star.p);
+    gl.disable(gl.DEPTH_TEST);
+    gl.enable(gl.BLEND);
+    gl.uniform2f(star.u.uCenter, pointer.x / window.innerWidth * 2 - 1, 1 - pointer.y / window.innerHeight * 2);
+    gl.uniform2f(star.u.uSize, starRadius * span / window.innerWidth * 2, starRadius * span / window.innerHeight * 2);
+    gl.uniform1f(star.u.uSpan, span);
+    gl.uniform1f(star.u.uTime, t % 1000);
+    gl.bindVertexArray(starVao);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
