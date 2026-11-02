@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Web demo – Vivavid</title>
+<style>
+  html, body { height:100%; margin:0; overflow:hidden; background:#7f9fe0; }
+  body { cursor:none; touch-action:none; user-select:none; -webkit-user-select:none; }
+  canvas { position:fixed; inset:0; width:100%; height:100%; display:block; }
+
+  /* Bred, osynlig träffyta runt den smala färgskalan */
+  #palette { position:fixed; top:0; right:0; bottom:0; width:48px; padding:12px 12px 12px 16px; box-sizing:border-box; cursor:ns-resize; outline:none; }
+  #scale { position:relative; height:100%; border-radius:10px; box-shadow:0 0 0 2px rgba(255,255,255,.75), 0 2px 12px rgba(0,0,0,.3); }
+  #marker { position:absolute; left:50%; top:0; width:28px; height:28px; margin:-14px 0 0 -14px; border-radius:50%; border:3px solid #fff; box-sizing:border-box; box-shadow:0 1px 6px rgba(0,0,0,.5); pointer-events:none; }
+  #palette:focus-visible #marker { outline:2px solid #000; outline-offset:2px; }
+</style>
+</head>
+<body>
+<canvas id="stage" aria-hidden="true"></canvas>
+<div id="palette" role="slider" tabindex="0" aria-label="Grundfärg" aria-orientation="vertical" aria-valuemin="0" aria-valuemax="359">
+  <div id="scale"><div id="marker"></div></div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  // Inställningar
+  const RADIUS = 50;        // cirkelns radie i CSS-pixlar
+  const LIGHTNESS = 0.74;   // OKLCH-ljushet: alla kulörer upplevs lika ljusa
+  const CHROMA = 0.14;      // OKLCH-mättnad
+  const DRIFT_DEG = 40;     // hur långt färgen vandrar från grundfärgen, i grader
+  const DRIFT_SECONDS = 14; // en full svängning i färgskalan
+  const HUE_TIME = 0.35;    // sekunder: mjuk övergång vid byte av grundfärg
+  const FADE_TIME = 0.12;   // sekunder: cirkeln tonas in/ut vid fönsterkanten
+
+  const canvas = document.getElementById('stage');
+  const palette = document.getElementById('palette');
+  const scale = document.getElementById('scale');
+  const marker = document.getElementById('marker');
+
+  // --- Färg: OKLCH till sRGB ---------------------------------------------
+
+  const toGamma = c => c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+
+  function oklabToLinear(L, a, b) {
+    const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+    const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+    const s = (L - 0.0894841775 * a - 1.2914855480 * b) ** 3;
+    return [
+       4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+      -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+      -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
+    ];
+  }
+
+  // Sänker mättnaden tills färgen ryms i sRGB, så att inga kulörer klipps
+  function oklch(L, C, hueDeg) {
+    const h = hueDeg * Math.PI / 180;
+    let lo = 0, hi = C, rgb = oklabToLinear(L, C * Math.cos(h), C * Math.sin(h));
+    if (rgb.some(v => v < 0 || v > 1)) {
+      for (let i = 0; i < 12; i++) {
+        const mid = (lo + hi) / 2;
+        const test = oklabToLinear(L, mid * Math.cos(h), mid * Math.sin(h));
+        if (test.some(v => v < 0 || v > 1)) hi = mid; else { lo = mid; rgb = test; }
+      }
+    }
+    return rgb.map(v => toGamma(Math.min(1, Math.max(0, v))));
+  }
+
+  const css = rgb => `rgb(${rgb.map(v => Math.round(v * 255)).join(' ')})`;
+
+  // --- Rendering: WebGL med dithering, annars Canvas 2D --------------------
+
+  const VERTEX = `
+    attribute vec2 p;
+    void main() { gl_Position = vec4(p, 0.0, 1.0); }`;
+
+  // Dithering (interleaved gradient noise) tar bort bandning i gradienten
+  const FRAGMENT = `
+    precision highp float;
+    uniform vec3 uColor;
+    uniform vec2 uMouse;
+    uniform float uRadius;
+    uniform float uPresence;
+    void main() {
+      float d = distance(gl_FragCoord.xy, uMouse);
+      float k = mix(1.0, smoothstep(0.0, uRadius, d), uPresence);
+      float n = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+      gl_FragColor = vec4(uColor * k + (n - 0.5) / 255.0, 1.0);
+    }`;
+
+  function createWebGL() {
+    const gl = canvas.getContext('webgl', { alpha:false, antialias:false, depth:false, stencil:false });
+    if (!gl) return null;
+
+    let u = null;
+    const compile = (type, source) => {
+      const shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      return shader;
+    };
+    const setup = () => {
+      const program = gl.createProgram();
+      gl.attachShader(program, compile(gl.VERTEX_SHADER, VERTEX));
+      gl.attachShader(program, compile(gl.FRAGMENT_SHADER, FRAGMENT));
+      gl.linkProgram(program);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return false;
+      gl.useProgram(program);
+      gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+      const p = gl.getAttribLocation(program, 'p');
+      gl.enableVertexAttribArray(p);
+      gl.vertexAttribPointer(p, 2, gl.FLOAT, false, 0, 0);
+      u = {
+        color: gl.getUniformLocation(program, 'uColor'),
+        mouse: gl.getUniformLocation(program, 'uMouse'),
+        radius: gl.getUniformLocation(program, 'uRadius'),
+        presence: gl.getUniformLocation(program, 'uPresence'),
+      };
+      return true;
+    };
+    if (!setup()) return null;
+
+    canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); u = null; });
+    canvas.addEventListener('webglcontextrestored', setup);
+
+    return (rgb, x, y, radius, presence) => {
+      if (!u) return;
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      gl.uniform3f(u.color, rgb[0], rgb[1], rgb[2]);
+      gl.uniform2f(u.mouse, x, canvas.height - y);
+      gl.uniform1f(u.radius, radius);
+      gl.uniform1f(u.presence, presence);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    };
+  }
+
+  function createCanvas2D() {
+    const ctx = canvas.getContext('2d', { alpha:false });
+    return (rgb, x, y, radius, presence) => {
+      ctx.fillStyle = css(rgb);
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      if (presence <= 0) return;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, radius);
+      g.addColorStop(0, `rgba(0,0,0,${presence})`);
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+    };
+  }
+
+  const draw = createWebGL() || createCanvas2D();
+
+  // --- Tillstånd ----------------------------------------------------------
+
+  let dpr = 1;
+  let targetHue = 262;  // vald grundfärg
+  let baseHue = targetHue;
+  const mouse = { x: 0, y: 0, inside: false };
+  let presence = 0;
+
+  function resize() {
+    dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(window.innerWidth * dpr);
+    canvas.height = Math.round(window.innerHeight * dpr);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // --- Muspekare ----------------------------------------------------------
+
+  function trackPointer(e) {
+    mouse.x = e.clientX;
+    mouse.y = e.clientY;
+    mouse.inside = true;
+  }
+  window.addEventListener('pointermove', trackPointer);
+  window.addEventListener('pointerdown', trackPointer);
+  window.addEventListener('pointerup', e => { if (e.pointerType === 'touch') mouse.inside = false; });
+  window.addEventListener('pointercancel', () => { mouse.inside = false; });
+  document.documentElement.addEventListener('pointerleave', () => { mouse.inside = false; });
+  window.addEventListener('blur', () => { mouse.inside = false; });
+
+  // --- Färgpalett ---------------------------------------------------------
+
+  const stops = [];
+  for (let i = 0; i <= 48; i++) stops.push(css(oklch(LIGHTNESS, CHROMA, i * 7.5)));
+  scale.style.background = `linear-gradient(to bottom, ${stops.join(',')})`;
+
+  function setHue(hue) {
+    targetHue = ((hue % 360) + 360) % 360;
+    marker.style.top = `${targetHue / 3.6}%`;
+    marker.style.background = css(oklch(LIGHTNESS, CHROMA, targetHue));
+    palette.setAttribute('aria-valuenow', Math.round(targetHue));
+  }
+  setHue(targetHue);
+
+  function pickFromPointer(e) {
+    const box = scale.getBoundingClientRect();
+    const t = Math.min(0.9999, Math.max(0, (e.clientY - box.top) / box.height));
+    setHue(t * 360);
+  }
+
+  palette.addEventListener('pointerdown', e => {
+    palette.setPointerCapture(e.pointerId);
+    pickFromPointer(e);
+  });
+  palette.addEventListener('pointermove', e => {
+    if (palette.hasPointerCapture(e.pointerId)) pickFromPointer(e);
+  });
+  palette.addEventListener('keydown', e => {
+    const step = e.shiftKey ? 30 : 5;
+    if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') setHue(targetHue - step);
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') setHue(targetHue + step);
+    else return;
+    e.preventDefault();
+  });
+
+  // --- Animation ----------------------------------------------------------
+
+  let last = performance.now();
+
+  function frame(now) {
+    const dt = Math.min(0.1, (now - last) / 1000);
+    last = now;
+
+    // Grundfärgen glider längs den kortaste vägen runt färgcirkeln
+    const delta = ((targetHue - baseHue + 540) % 360) - 180;
+    baseHue += delta * (1 - Math.exp(-dt / HUE_TIME));
+
+    // Två sinusvågor med olika takt ger en rörelse som inte känns upprepad
+    const phase = now / 1000 / DRIFT_SECONDS * Math.PI * 2;
+    const drift = DRIFT_DEG * (0.7 * Math.sin(phase) + 0.3 * Math.sin(phase * 2.37 + 1));
+    const rgb = oklch(LIGHTNESS, CHROMA, baseHue + drift);
+
+    presence += ((mouse.inside ? 1 : 0) - presence) * (1 - Math.exp(-dt / FADE_TIME));
+
+    draw(rgb, mouse.x * dpr, mouse.y * dpr, RADIUS * dpr, presence);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
