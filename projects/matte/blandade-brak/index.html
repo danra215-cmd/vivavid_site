@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Blandade bråk – Matte – Vivavid</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink:#151719; --muted:rgba(21,23,25,.59); --line:#e0e0e2;
+    --accent:#2d5fe3; --ok:#1f8a4c; --ok-bg:#e7f6ec; --bad:#c62828; --bad-bg:#fdecec;
+    --key:#f1f2f4; --key-press:#dfe1e5;
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { margin:0; }
+  body { font-family:"Noto Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; color:var(--ink); line-height:1.5; background:#fff; }
+  .wrap { max-width:520px; margin:0 auto; padding:0 16px; }
+  header { padding:16px 0; border-bottom:1px solid var(--line); }
+  header .wrap { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+  header a { color:var(--accent); text-decoration:none; }
+  .stats { display:flex; gap:16px; font-variant-numeric:tabular-nums; color:var(--muted); font-size:.95rem; }
+  .stats b { color:var(--ink); font-weight:500; }
+
+  h1 { font-size:1.6rem; margin:28px 0 8px; }
+  p { color:var(--muted); margin:0 0 16px; }
+  .examples { color:var(--ink); margin:0 0 20px; padding-left:20px; }
+  .examples li { margin:4px 0; }
+
+  .btn { display:block; width:100%; border:0; border-radius:10px; padding:14px 16px; font:inherit; font-size:1.1rem; font-weight:500; cursor:pointer; background:var(--accent); color:#fff; text-align:center; text-decoration:none; }
+  .btn.secondary { background:#f1f2f4; color:var(--ink); }
+  .btn + .btn { margin-top:10px; }
+
+  /* Bråk som staplas: täljare över nämnare */
+  .frac { display:inline-flex; flex-direction:column; align-items:center; vertical-align:middle; line-height:1.05; margin:0 .08em; }
+  .frac > span:first-child { border-bottom:.07em solid currentColor; padding:0 .12em; }
+  .frac > span:last-child { padding:0 .12em; }
+  .frac > span:empty::before { content:"\00a0"; }
+
+  /* Quiz */
+  .progress { height:4px; background:#f1f2f4; border-radius:2px; margin:20px 0 20px; overflow:hidden; }
+  .progress div { height:100%; width:0; background:var(--accent); transition:width .2s; }
+  .qnum { color:var(--muted); font-size:.95rem; margin-bottom:2px; }
+  .task { color:var(--muted); font-size:1rem; margin-bottom:8px; }
+  .question { font-size:2.2rem; font-weight:700; line-height:1.2; margin:0 0 16px; font-variant-numeric:tabular-nums; display:flex; align-items:center; flex-wrap:wrap; gap:.25em; min-height:2.6em; }
+
+  .display {
+    display:flex; align-items:center; min-height:72px; padding:6px 14px;
+    border:2px solid var(--accent); border-radius:10px; font-size:1.8rem; font-weight:500;
+    font-variant-numeric:tabular-nums; background:#fff; overflow-x:auto; white-space:nowrap;
+  }
+  .display.ok { border-color:var(--ok); background:var(--ok-bg); }
+  .display.bad { border-color:var(--bad); background:var(--bad-bg); }
+  .display .caret { display:inline-block; width:2px; height:1.1em; background:var(--accent); margin-left:2px; animation:blink 1s steps(1) infinite; vertical-align:middle; }
+  .display.ok .caret, .display.bad .caret { display:none; }
+  @keyframes blink { 50% { opacity:0; } }
+  .hint { color:var(--muted); font-size:.9rem; margin:6px 0 0; min-height:1.4em; }
+
+  .feedback { min-height:3.4em; margin:8px 0 10px; font-size:1.05rem; font-weight:500; display:flex; align-items:center; flex-wrap:wrap; gap:.3em; }
+  .feedback.ok { color:var(--ok); }
+  .feedback.bad { color:var(--bad); }
+
+  .keypad { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; user-select:none; -webkit-user-select:none; touch-action:manipulation; }
+  .keypad button {
+    font:inherit; font-size:1.5rem; font-weight:500; height:56px; border:0; border-radius:10px;
+    background:var(--key); color:var(--ink); cursor:pointer;
+  }
+  .keypad button:active { background:var(--key-press); }
+  .keypad .op { background:#e6ecfc; color:var(--accent); }
+  .keypad .submit { background:var(--accent); color:#fff; font-size:1.15rem; }
+  .keypad .submit:active { background:#2350c4; }
+
+  /* Result */
+  .score { font-size:3rem; font-weight:700; margin:8px 0 0; font-variant-numeric:tabular-nums; }
+  .time { color:var(--muted); margin-bottom:24px; }
+  .review { list-style:none; padding:0; margin:0 0 24px; border-top:1px solid var(--line); }
+  .review li { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:8px 0; border-bottom:1px solid var(--line); font-variant-numeric:tabular-nums; font-size:1.1rem; }
+  .review .wrong { color:var(--bad); }
+  .review .right { color:var(--ok); }
+
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a href="../">← Matte</a>
+    <div class="stats" id="stats" hidden>
+      <span>Poäng <b id="score">0</b></span>
+      <span>Tid <b id="timer">0</b> s</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section id="start">
+    <h1>Blandade bråk</h1>
+    <p>Skriv om tal mellan decimalform, blandad form och bråkform. 10 frågor. Du får 1 poäng för varje rätt svar, och tiden räknas från första frågan.</p>
+    <ul class="examples">
+      <li>1,5 = 1 + <span class="frac"><span>1</span><span>2</span></span> &nbsp;och&nbsp; 1 + <span class="frac"><span>3</span><span>4</span></span> = 1,75</li>
+      <li><span class="frac"><span>7</span><span>4</span></span> = 1 + <span class="frac"><span>3</span><span>4</span></span> &nbsp;och&nbsp; 1 + <span class="frac"><span>2</span><span>5</span></span> = <span class="frac"><span>7</span><span>5</span></span></li>
+    </ul>
+    <p>Skriv bråk med <b>/</b> och blandad form med <b>+</b>, till exempel 1+3/4. Bråken ska vara förkortade så långt det går.</p>
+    <button class="btn" id="startBtn" type="button">Starta</button>
+  </section>
+
+  <section id="quiz" hidden>
+    <div class="progress"><div id="bar"></div></div>
+    <div class="qnum" id="qnum"></div>
+    <div class="task" id="task"></div>
+    <div class="question" id="question"></div>
+    <div class="display" id="display" aria-live="polite"></div>
+    <div class="hint" id="hint"></div>
+    <div class="feedback" id="feedback" aria-live="polite"></div>
+    <div class="keypad" id="keypad">
+      <button type="button" data-k="7">7</button>
+      <button type="button" data-k="8">8</button>
+      <button type="button" data-k="9">9</button>
+      <button type="button" data-k="back" class="op" aria-label="Sudda">⌫</button>
+      <button type="button" data-k="4">4</button>
+      <button type="button" data-k="5">5</button>
+      <button type="button" data-k="6">6</button>
+      <button type="button" data-k="+" class="op">+</button>
+      <button type="button" data-k="1">1</button>
+      <button type="button" data-k="2">2</button>
+      <button type="button" data-k="3">3</button>
+      <button type="button" data-k="/" class="op">/</button>
+      <button type="button" data-k="0">0</button>
+      <button type="button" data-k="," class="op">,</button>
+      <button type="button" data-k="enter" class="submit" style="grid-column:span 2">Svara</button>
+    </div>
+  </section>
+
+  <section id="result" hidden>
+    <h1>Klart!</h1>
+    <div class="score" id="finalScore"></div>
+    <div class="time" id="finalTime"></div>
+    <ul class="review" id="review"></ul>
+    <button class="btn" id="againBtn" type="button">Kör igen</button>
+    <a class="btn secondary" href="../" style="margin-top:10px">Tillbaka till Matte</a>
+  </section>
+
+</main>
+
+<script>
+(function () {
+  const TOTAL = 10;
+  const MAX_LEN = 12;
+  const OK_DELAY = 600;
+  const BAD_DELAY = 2200;
+
+  const $ = (id) => document.getElementById(id);
+  const el = {
+    start: $("start"), quiz: $("quiz"), result: $("result"), stats: $("stats"),
+    score: $("score"), timer: $("timer"), bar: $("bar"), qnum: $("qnum"), task: $("task"),
+    question: $("question"), display: $("display"), hint: $("hint"), feedback: $("feedback"),
+    keypad: $("keypad"), finalScore: $("finalScore"), finalTime: $("finalTime"), review: $("review"),
+  };
+
+  // ---------- Hjälpfunktioner ----------
+  const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+  const pick = (arr) => arr[rand(0, arr.length - 1)];
+  const gcd = (a, b) => (b ? gcd(b, a % b) : Math.abs(a));
+
+  // Talformer. Alla värden lagras exakt som bråk {n, d}.
+  // dec: decimaltal, t.ex. "1,75"   mixed: "1+3/4"   improper: "7/4"
+  function decString(n, d) {
+    // d är 2, 4, 5 eller 10 – ger alltid ändligt decimaltal
+    let whole = Math.floor(n / d), rest = n % d, digits = "";
+    let guard = 0;
+    while (rest && guard++ < 6) { rest *= 10; digits += Math.floor(rest / d); rest %= d; }
+    return digits ? `${whole},${digits}` : String(whole);
+  }
+
+  // ---------- Frågegenerator ----------
+  // Typ A: decimal ↔ blandad form (nämnare som ger "snälla" decimaler)
+  const DEC_FRACS = [[1,2],[1,4],[3,4],[1,5],[2,5],[3,5],[4,5],[1,10],[3,10],[7,10],[9,10]];
+  // Typ B: bråkform ↔ blandad form
+  const DENOMS_B = [2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+  function makeQuestion() {
+    const whole = rand(1, 4);
+    if (Math.random() < 0.5) {
+      // Typ A
+      const [p, d] = pick(DEC_FRACS);
+      const n = whole * d + p;
+      const dec = decString(n, d);
+      if (Math.random() < 0.5) {
+        return { from: { kind: "dec", text: dec }, want: "mixed", value: { n, d }, answer: `${whole}+${p}/${d}`,
+                 task: "Skriv i blandad form" };
+      }
+      return { from: { kind: "mixed", whole, p, d }, want: "dec", value: { n, d }, answer: dec,
+               task: "Skriv som decimaltal" };
+    }
+    // Typ B
+    let d, p;
+    do { d = pick(DENOMS_B); p = rand(1, d - 1); } while (gcd(p, d) !== 1);
+    const n = whole * d + p;
+    if (Math.random() < 0.5) {
+      return { from: { kind: "improper", n, d }, want: "mixed", value: { n, d }, answer: `${whole}+${p}/${d}`,
+               task: "Skriv i blandad form" };
+    }
+    return { from: { kind: "mixed", whole, p, d }, want: "improper", value: { n, d }, answer: `${n}/${d}`,
+             task: "Skriv i bråkform" };
+  }
+
+  // ---------- Rendering av tal (bråk staplas) ----------
+  function frac(n, d) {
+    const s = document.createElement("span"); s.className = "frac";
+    const a = document.createElement("span"); a.textContent = n;
+    const b = document.createElement("span"); b.textContent = d;
+    s.append(a, b); return s;
+  }
+  // Ritar en textsträng som "1+3/4", "7/4" eller "1,75" med staplade bråk.
+  function renderExpr(str, target) {
+    target.textContent = "";
+    // Dela upp på "+" men behåll plustecknen
+    const parts = str.split(/(\+)/);
+    for (const part of parts) {
+      if (part === "+") { target.append(document.createTextNode(" + ")); continue; }
+      if (part.includes("/")) {
+        const [n, d] = part.split("/");
+        target.append(frac(n, d ?? ""));
+      } else if (part !== "") {
+        target.append(document.createTextNode(part));
+      }
+    }
+  }
+  function renderFrom(f, target) {
+    target.textContent = "";
+    if (f.kind === "dec") renderExpr(f.text, target);
+    else if (f.kind === "improper") renderExpr(`${f.n}/${f.d}`, target);
+    else renderExpr(`${f.whole}+${f.p}/${f.d}`, target);
+    target.append(document.createTextNode(" ="));
+  }
+
+  // ---------- Tolkning och rättning ----------
+  // Returnerar { ok, reason } – reason förklarar varför ett matematiskt rätt värde ändå inte godkänns.
+  function check(raw, q) {
+    const s = raw.replace(/\s/g, "").replace(/\./g, ",");
+    const { n, d } = q.value;
+
+    if (q.want === "dec") {
+      if (!/^\d+(,\d+)?$/.test(s)) return { ok: false, reason: "Svara med ett decimaltal, t.ex. 1,75." };
+      const [w, f = ""] = s.split(",");
+      // Jämför exakt: w + f/10^len == n/d
+      const den = Math.pow(10, f.length);
+      const num = Number(w) * den + (f ? Number(f) : 0);
+      return { ok: num * d === n * den };
+    }
+
+    if (q.want === "improper") {
+      const m = s.match(/^(\d+)\/(\d+)$/);
+      if (!m) return { ok: false, reason: "Svara i bråkform, t.ex. 7/4." };
+      const a = Number(m[1]), b = Number(m[2]);
+      if (b === 0 || a * d !== n * b) return { ok: false };
+      if (gcd(a, b) !== 1) return { ok: false, reason: "Rätt värde, men bråket ska förkortas." };
+      return { ok: true };
+    }
+
+    // want === "mixed"
+    const m = s.match(/^(\d+)\+(\d+)\/(\d+)$/);
+    if (!m) return { ok: false, reason: "Svara i blandad form, t.ex. 1+3/4." };
+    const w = Number(m[1]), a = Number(m[2]), b = Number(m[3]);
+    if (b === 0 || (w * b + a) * d !== n * b) return { ok: false };
+    if (a >= b) return { ok: false, reason: "Rätt värde, men bråkdelen ska vara mindre än 1." };
+    if (gcd(a, b) !== 1) return { ok: false, reason: "Rätt värde, men bråket ska förkortas." };
+    return { ok: true };
+  }
+
+  // ---------- Inmatning ----------
+  let input = "";
+  function drawInput() {
+    renderExpr(input, el.display);
+    const c = document.createElement("span"); c.className = "caret";
+    el.display.append(c);
+  }
+  function press(k) {
+    if (el.quiz.hidden || locked) return;
+    if (k === "enter") { submit(); return; }
+    if (k === "back") { input = input.slice(0, -1); }
+    else if (input.length < MAX_LEN) {
+      const last = input.slice(-1);
+      if ("+/,".includes(k)) {
+        if (input === "" || "+/,".includes(last)) return;      // inga dubbla tecken eller tecken först
+        if (k === "," && /[,\/+]/.test(input)) return;          // decimaltal: bara ett komma, inte blandat
+        if (k === "+" && /[+\/,]/.test(input)) return;          // ett plus, före bråket
+        if (k === "/" && /[\/,]/.test(input)) return;           // ett bråkstreck
+      }
+      input += k;
+    }
+    el.hint.textContent = "";
+    drawInput();
+  }
+
+  el.keypad.addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (b) press(b.dataset.k);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (el.quiz.hidden) return;
+    const map = { Enter: "enter", Backspace: "back", ".": ",", ",": ",", "+": "+", "/": "/", " ": "+" };
+    const k = /^\d$/.test(e.key) ? e.key : map[e.key];
+    if (k) { e.preventDefault(); press(k); }
+  });
+
+  // ---------- Spellogik ----------
+  let questions = [], index = 0, points = 0, startTime = 0, tick = null, locked = false, log = [];
+
+  function newRound() {
+    const seen = new Set();
+    questions = [];
+    while (questions.length < TOTAL) {
+      const q = makeQuestion();
+      const key = q.want + q.answer;
+      if (!seen.has(key)) { seen.add(key); questions.push(q); }
+    }
+    index = 0; points = 0; log = [];
+    el.score.textContent = "0";
+    el.timer.textContent = "0";
+  }
+
+  function showQuestion() {
+    const q = questions[index];
+    el.qnum.textContent = `Fråga ${index + 1} av ${TOTAL}`;
+    el.task.textContent = q.task;
+    renderFrom(q.from, el.question);
+    el.bar.style.width = `${(index / TOTAL) * 100}%`;
+    input = "";
+    el.display.className = "display";
+    drawInput();
+    el.hint.textContent = "";
+    el.feedback.textContent = "";
+    el.feedback.className = "feedback";
+    locked = false;
+  }
+
+  function start() {
+    newRound();
+    el.start.hidden = true;
+    el.result.hidden = true;
+    el.quiz.hidden = false;
+    el.stats.hidden = false;
+    showQuestion();
+    startTime = Date.now();
+    clearInterval(tick);
+    tick = setInterval(() => {
+      el.timer.textContent = Math.floor((Date.now() - startTime) / 1000);
+    }, 250);
+  }
+
+  function submit() {
+    if (locked) return;
+    if (input === "" || "+/,".includes(input.slice(-1))) { el.hint.textContent = "Skriv klart ditt svar först."; return; }
+
+    const q = questions[index];
+    const res = check(input, q);
+    locked = true;
+    log.push({ q, given: input, correct: res.ok });
+
+    el.feedback.textContent = "";
+    if (res.ok) {
+      points += 1;
+      el.score.textContent = points;
+      el.display.className = "display ok";
+      el.feedback.className = "feedback ok";
+      el.feedback.textContent = "Rätt!";
+    } else {
+      el.display.className = "display bad";
+      el.feedback.className = "feedback bad";
+      el.feedback.append(document.createTextNode(res.reason ? `${res.reason} Rätt svar: ` : "Fel – rätt svar är "));
+      const ans = document.createElement("span");
+      renderExpr(q.answer, ans);
+      el.feedback.append(ans);
+    }
+    setTimeout(next, res.ok ? OK_DELAY : (res.reason ? BAD_DELAY + 800 : BAD_DELAY));
+  }
+
+  function next() {
+    index += 1;
+    if (index < TOTAL) { showQuestion(); return; }
+    finish();
+  }
+
+  function finish() {
+    clearInterval(tick);
+    const secs = Math.round((Date.now() - startTime) / 1000);
+    el.timer.textContent = secs;
+    el.bar.style.width = "100%";
+    el.quiz.hidden = true;
+    el.result.hidden = false;
+    el.finalScore.textContent = `${points} / ${TOTAL}`;
+    el.finalTime.textContent = `Tid: ${secs} sekunder`;
+    el.review.innerHTML = "";
+    for (const item of log) {
+      const li = document.createElement("li");
+      const left = document.createElement("span");
+      renderFrom(item.q.from, left);
+      left.append(document.createTextNode(" "));
+      const ans = document.createElement("span");
+      renderExpr(item.q.answer, ans);
+      left.append(ans);
+      const right = document.createElement("span");
+      right.className = item.correct ? "right" : "wrong";
+      if (item.correct) right.textContent = "✓";
+      else {
+        right.append(document.createTextNode("✗ ("));
+        const g = document.createElement("span"); renderExpr(item.given, g);
+        right.append(g, document.createTextNode(")"));
+      }
+      li.append(left, right);
+      el.review.append(li);
+    }
+  }
+
+  $("startBtn").addEventListener("click", start);
+  $("againBtn").addEventListener("click", start);
+})();
+</script>
+</body>
+</html>
